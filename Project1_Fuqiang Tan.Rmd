@@ -1,0 +1,230 @@
+---
+title: "Project1_Junior Data Scientist Salary Exploration"
+author: "Fuqiang Tan"
+date: "3/15/2022"
+output: pdf_document
+always_allow_html: true
+---
+
+Import all necessary libraries.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.table.format = "latex")
+library(flexdashboard)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(colorspace)
+library(knitr)
+library(sf)
+library(tmap)
+library(ggplot2)
+library(tigris)
+library(tmaptools)
+library(tmap)
+library(censusapi)
+library(patchwork)
+library(readxl)
+library(usmap)
+library(plotly)
+library(webshot)
+library(knitr)
+library(rmarkdown)
+library(tinytex)
+library(kableExtra)
+library(janitor)
+library(stringr)
+library(foreach)
+library(reshape2)
+```
+
+## Introduction and Problem
+The purpose of this project is to analyze the “Data Scientist Salary” dataset scraped from Glassdoor to get an in-depth look into the demands of data science jobs by different technology sectors, which will provide expectation on job prospect for the upcoming graduating class in the Data Science field. 
+
+Exploration of the dataset using R will answer the following questions:
+1.	What is the minimum, maximum and average wage for entry level Data Science positions in different states? (Salary negotiation)
+2.	What is the most in demand programming language for Data Scientist in 2021? (Skill focus and job opportunities)
+3.	Which state in the US offers most opportunity for data professionals? (Job opportunities)
+4.	What is the demand for data professionals by different technology sectors? (Job opportunity)
+
+
+## Loading the Data
+Here, we redirect the path to fetch and load the data into R from the .csv file. Upon inspection of the data frame, it already has defined column names and uniform data except for title and degree columns, indicating that the author had already done some cleaning for us, but we might need to do some data wrangling to fix those columns before we proceed to data exploration.
+
+```{r, echo=TRUE}
+setwd("/Users/fuqiangtan/Desktop/Project1")
+ds_salary_df= read_csv("dsdata_2021.csv")
+
+head(ds_salary_df)
+colnames(ds_salary_df)
+view(ds_salary_df)
+
+```
+
+
+## Data Wrangling
+Before we explore the dataset, we start by cleaning the column names by adding "_" in-between spaces so they can be referenced by functions. Then change "na" values into "NA", so that it's recognizable by the .isna() function for further cleaning of the data frame(df).
+
+Based on observation, most senior titles require a master(M) or a post-doc(P) degree, while junior titles are paired with NA degree values, and require the least experience according to the description. So we could assume titles with NA degree values are available to the lowest denominator, people with undergraduate degrees, so I replaced the NA degree values with U for undergraduate. Followed with replacing NA title values with jr if the degree requirement is U. 
+
+Since we only want to analyze salary data pertain to junior level titles, rows with senior(sr) title values are removed. To eliminate outlier salaries from skewing our graphs and models, top 10% and bottom 10% salary data are excluded from the dataset, because the likeliness of a person with a fresh undergraduate degree getting paid 200k is extremely rare. The same applies to the opposite side of the spectrum, Data Scientist positions offering 10-30k would attract zero interest from applicants.
+```{r, echo=TRUE}
+
+ds_salary_df <- ds_salary_df %>% clean_names() #clean the column names of the df, insert _ into spaces
+ds_salary_df[ds_salary_df=="na"] <- NA #change all df values
+
+
+ds_salary_df<-ds_salary_df %>% arrange(degree,seniority_by_title)%>% group_by(degree) %>% fill(seniority_by_title, .direction="downup") #arrange degree and seniority then group by degree designation and populate seniority titles and fill in the missing values. If P or M then sr.
+
+ds_salary_df$degree <- ds_salary_df$degree %>% replace_na('U') #if na in degree requirement column replace with U (undergraduate)
+
+ds_salary_df$seniority_by_title[ds_salary_df$degree=='U'] <-'jr' #replace NAs on the seniority title column with jr if degree is U, because we are assuming that if listed as U then its open for all.
+
+jr_jobs <- ds_salary_df[!(ds_salary_df$seniority_by_title=="sr"),] #exclude all senior level jobs to focus analysis on on junior jobs
+
+
+jr_jobs = jr_jobs[jr_jobs$avg_salary_k < quantile(jr_jobs$avg_salary_k,prob=.9) & jr_jobs$avg_salary_k > quantile(jr_jobs$avg_salary_k,prob=.1),] #exclude top 10% and bottom 10% of outlier from skewing the model
+
+
+```
+
+\begingroup
+\fontfamily{ppl}\fontsize{22}{22}\selectfont
+Data Exploration and Analysis
+\endgroup
+
+
+## National Average Salaries
+
+The first question we want to answer is "What is the minimum, maximum, and average wage for entry-level Data Science positions in different states?" Before jumping into that, we want to see the national average first, so we could have a reference for comparison. And the national averages are as follows:
+
+```{r, echo=TRUE}
+#national averages
+national_low<-mean(jr_jobs$lower_salary) # national average lower salary is 70K
+national_high<-mean(jr_jobs$upper_salary) # national average upper salary is 119k
+national_avg<-mean(jr_jobs$avg_salary_k) # avg of national salary
+
+df<-data.frame(Name = c("national_lower","national_upper","national_avg"), num_k=c(66.47, 116.75, 91.61))
+df
+```
+
+
+
+## State Min, Max, Mean Salaries
+
+The following are min, max, and mean averages at the state level. The takeaway from the state minimum salary table is that we should avoid looking for jobs in those states, as they are already not known for their tech industries.
+
+Both state max salary and state average salary values share states, such as UT, DC, IL, and CA. We can deduce the states that appear in both upper limits and state average tables offer competitive pay because the state average is near the top end of the scale. 
+
+```{r, echo=TRUE}
+#What is the minimum, maximum and average wage for entry level Data Science positions in different states?
+salary_by_state_min <- jr_jobs %>% group_by(job_location) %>% summarize(lower_salary = mean(lower_salary)) #%>%arrange(location, lower_salary) #min by states
+salary_by_state_min <- arrange(salary_by_state_min, -desc(lower_salary))
+  
+
+salary_by_state_max <- jr_jobs %>% group_by(job_location) %>% summarize(upper_salary = mean(upper_salary)) #%>%arrange(location, upper_salary) #max by states
+salary_by_state_max <- arrange(salary_by_state_max, desc(upper_salary))
+
+salary_by_state_avg <- jr_jobs %>% group_by(job_location) %>% summarize(avg_salary_k = mean(avg_salary_k)) #%>%arrange(location, avg_salary_k) #avg by states
+salary_by_state_avg<- arrange(salary_by_state_avg, desc(avg_salary_k))
+
+salary_by_state_min
+salary_by_state_max
+salary_by_state_avg
+
+```
+
+## State Average Salary Histogram
+The following histogram produced by ggplot provides a visualization of the average salary per state in the US. The x-axis is the states and the y axis is the average salaries for those states. Then we apply that data onto tmap to visualize the data from the geographical point of view. There are white spaces appearing on the map, indicating missing data for those states, this could be a sign that the data is small, with a limited sample size on state salaries.
+
+```{r, echo=TRUE}
+###histo
+salary_plot_avg<-ggplot(jr_jobs) +
+  geom_bar( aes(x=reorder(jr_jobs$job_location, +jr_jobs$avg_salary_k/100), y=(jr_jobs$avg_salary_k)/100), stat="identity", fill="blue", alpha=0.7) +coord_flip()+
+  ggtitle("Average Salary by State")+xlab("State")+ylab("Salary (k)")
+
+###map
+setwd("/Users/fuqiangtan/Desktop/Project1")
+download.file("https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip", destfile = "state_20m.zip")
+unzip("state_20m.zip")
+state_map = st_read("cb_2018_us_state_20m.shp")
+
+state_map = filter(state_map, STATEFP != '15',
+                   STATEFP != '02',
+                   STATEFP != '72',
+                   STATEFP != '66',
+                   STATEFP != '69',
+                   STATEFP != '60',
+                   STATEFP != '78')
+
+jr_jobs = mutate(jr_jobs, STATEFP = fips(job_location)) #apply fips data to jr jobs df
+
+state_salary_map = inner_join(state_map, jr_jobs, by = "STATEFP") #join state map info with jr_jobs by statefp
+
+#map with avaerage salary fill
+map1=tm_shape(state_salary_map) + tm_fill(col="avg_salary_k", title = "Avg. Salary", style="quantile", n=10) + tm_borders(col="black", lwd=.5)+tm_layout(legend.outside = TRUE, legend.outside.position = c("right", "bottom"), frame=FALSE) 
+
+salary_plot_avg
+map1
+
+```
+
+## In Demand Programming Languges
+Next, we want to answer the second question, "What is the most in-demand programming language for Data scientists in 2021?" 
+The following bar plot shows in-demand programming languages based on the sum of required languages per job. With this insight, we could focus on learning the top languages on the bar plot to improve our marketable skills which would in return increase our values during job hunting to make ourselves more desirable to employers, so we could negotiate higher salaries. As appears that SQL, Python, Excel, Spark, and Tableau are the top five most in-demand tech companies.
+
+```{r, echo=TRUE}
+wanted_skills <- jr_jobs[c('python', 'spark', 'aws', 'excel','sql','sas','keras','pytorch','scikit','tensor','hadoop','tableau','bi','flink','mongo','google_an') ]
+wanted_skills_sum<- colSums(wanted_skills[])
+
+wanted_skills_sum = data.frame(Name = names(wanted_skills_sum), Count = wanted_skills_sum)
+
+#barplot in descending order with wanted skill values
+
+p=ggplot(wanted_skills_sum, aes(x= reorder(Name,-Count), y=Count)) + geom_col()+ geom_bar(stat = "identity") + ggtitle("Programming Languages In Demand by Companies")+xlab("Programming Languages")+ylab("Count")
+
+p
+```
+
+## Opportunities by State
+The third question we want to answer is "Which state in the US offers the most opportunity for data professionals?" 
+The following bar plot is based on the number of postings for each state. Massachusetts, California, New York, Virginia, and Texas take up the top five as they have the most job postings related to data science. Then we project that data onto the state map. The white space on the map indicates that the dataset lack coverage for those states.
+
+```{r, echo=TRUE}
+table(jr_jobs$job_location)# put this into a vertical barplot
+job_location_sum<-table(jr_jobs$job_location)
+job_location_sum<-data.frame(Name = names(job_location_sum), Count = job_location_sum)
+job_location_sum<-select(job_location_sum, Name, Count.Freq) #state name with state count #
+top10_opportunity<-head(arrange(job_location_sum,desc(Count.Freq)),n=10) #list top 10 opportunity
+
+#represent job opportunities on map
+job_location_sum = mutate(job_location_sum, STATEFP = fips(Name))
+state_opportunity_map = inner_join(state_map, job_location_sum, by = "STATEFP")
+map2=tm_shape(state_opportunity_map) + tm_fill(col="Count.Freq", title = "Position Counts", style="quantile", n=5) + tm_borders(col="black", lwd=.5)+tm_layout(legend.outside = TRUE, legend.outside.position = c("right", "bottom"), frame=FALSE)
+
+top10_opportunity
+map2
+```
+
+## Job Demand by Sector
+The final question we want to answer is "What is the demand for data professionals in different technology sectors?"
+Based on the bar plot, it would appear industries that rely on analytics for innovation and growth, such as IT, Business, Biotech, and Finance sectors show the most appetite for data professionals.
+```{r, echo=TRUE}
+position_by_sector<-table(jr_jobs$sector)
+position_by_sector<-data.frame(Name = names(position_by_sector), Count = position_by_sector)
+position_by_sector<-position_by_sector[-c(1),]
+position_by_sector<-select(position_by_sector,Name, Count.Freq)
+
+p2=ggplot(position_by_sector, aes(x= reorder(Name,-Count.Freq), y=Count.Freq)) + geom_col()+ 
+  geom_bar(stat = "identity") + ggtitle("Data Scientist Demand by Sector")+xlab("Sectors")+ylab("Count")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+p2
+```
+
+## Conclusion 
+Using our data manipulation skills we explored the "Data Scientist Salary" dataset from Kaggle and answered the questions we set out to answer. We gained insights to salaries and skill demands related to Data Science positions by different states, which provide salary expections for the upcoming graduating class who majored in Data Science.
+
+## Source
+https://www.kaggle.com/datasets/nikhilbhathi/data-scientist-salary-us-glassdoor
+
